@@ -1,17 +1,20 @@
 import os
 import requests
 from datetime import datetime, timedelta
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request
 app = Flask(__name__)
-API_KEY = "TA_CLE_ICI"
+API_KEY = os.environ.get("API_KEY", "")
 H = {"x-apisports-key": API_KEY}
 B = "https://v3.football.api-sports.io"
 CACHE = {}
-
-def get_all():
-    today = datetime.utcnow().strftime("%Y-%m-%d")
-    tom = (datetime.utcnow() + timedelta(days=1)).strftime("%Y-%m-%d")
-    for d in [today, tom]:
+def get_all(date_demande=None):
+    if date_demande:
+        dates = [date_demande]
+    else:
+        today = datetime.utcnow().strftime("%Y-%m-%d")
+        tom = (datetime.utcnow() + timedelta(days=1)).strftime("%Y-%m-%d")
+        dates = [today, tom]
+    for d in dates:
         try:
             r = requests.get(B + "/fixtures", headers=H, params={"date": d}, timeout=20)
             data = r.json().get("response", [])
@@ -20,7 +23,6 @@ def get_all():
         except:
             pass
     return []
-
 def get_stand(lid, season):
     if lid in CACHE:
         return CACHE[lid]
@@ -40,7 +42,6 @@ def get_stand(lid, season):
         return d
     except:
         return {}
-
 def vrai_prono(m):
     hid = m["teams"]["home"]["id"]
     aid = m["teams"]["away"]["id"]
@@ -77,18 +78,16 @@ def vrai_prono(m):
     if pct < 50:
         pct = 50
     return "12", round(100 / pct, 2), pct
-
 def statut(m):
     s = m["fixture"]["status"]["short"]
     el = m["fixture"]["status"]["elapsed"]
     if s in ["FT", "AET", "PEN"]:
-        return "FT"
+        return "TERMINÉ"
     if s in ["1H", "2H", "HT", "ET", "BT", "P"]:
         if el:
-            return str(el) + "'"
+            return "LIVE " + str(el) + "'"
         return "LIVE"
     return m["fixture"]["date"][11:16]
-
 @app.route("/")
 def index():
     ms = get_all()
@@ -109,7 +108,7 @@ def index():
             h += "<b>Ta Boutique Ici - 5$ / semaine</b><br>Contact WhatsApp</div>"
         st = statut(m)
         p, cote, pct = vrai_prono(m)
-        cls = "ft" if st == "FT" else "st"
+        cls = "ft" if st == "TERMINÉ" else "st"
         gh = m["goals"]["home"]
         if gh is None:
             gh = ""
@@ -133,7 +132,6 @@ def index():
     h += "<div class='bt'><div style='color:#00e676'>Matchs</div><div>Pronostics</div>"
     h += "<div>Favoris</div><div>Filtre</div><div>Machine</div><div>Paris</div></div></body></html>"
     return h
-
 @app.route("/match/<int:fid>")
 def detail(fid):
     try:
@@ -169,10 +167,10 @@ def detail(fid):
         return s
     except Exception as e:
         return "Erreur " + str(e) + " <a href='/'>Retour</a>"
-
 @app.route("/api/matches")
 def api_matches():
-    ms = get_all()
+    date_demande = request.args.get("date")
+    ms = get_all(date_demande)
     out = []
     for m in ms:
         p, cote, pct = vrai_prono(m)
@@ -182,21 +180,24 @@ def api_matches():
         ga = m["goals"]["away"]
         if ga is None:
             ga = ""
+        score = str(gh) + " - " + str(ga)
+        if gh == "" and ga == "":
+            score = " - "
         item = {}
         item["id"] = m["fixture"]["id"]
-        item["league"] = m["league"]["name"]
+        item["league"] = m["league"]["name"] + " - " + m["league"]["country"]
         item["country"] = m["league"]["country"]
         item["home"] = m["teams"]["home"]["name"]
         item["away"] = m["teams"]["away"]["name"]
         item["status"] = statut(m)
+        item["score"] = score
         item["gh"] = gh
         item["ga"] = ga
         item["prono"] = p
         item["cote"] = cote
         item["pct"] = pct
         out.append(item)
-    return jsonify(out)
-
+    return jsonify({"matchs": out})
 @app.route("/api/match/<int:fid>")
 def api_match(fid):
     try:
@@ -218,7 +219,6 @@ def api_match(fid):
         return jsonify(item)
     except Exception as e:
         return jsonify({"error": str(e)})
-
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
